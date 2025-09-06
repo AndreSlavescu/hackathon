@@ -53,14 +53,29 @@ def convert_weights_for_optimization(original_state_dict: Dict[str, torch.Tensor
     return converted_state_dict
 
 
-def create_compatible_optimized_model(config: ModelConfig, weights_path: str) -> nn.Module:
+def create_compatible_optimized_model(config: ModelConfig, weights_path: str = None) -> nn.Module:
     """
     Create an optimized model that can load pre-trained weights.
+    
+    Args:
+        config: Model configuration
+        weights_path: Path to original weights (None to auto-download)
     
     Returns:
         Optimized model with converted weights loaded
     """
     print("🔄 Converting pre-trained weights for optimized model...")
+    
+    # Auto-download if no path provided
+    if weights_path is None:
+        print("📥 Downloading original weights...")
+        from huggingface_hub import hf_hub_download
+        weights_path = hf_hub_download(
+            repo_id="jane-street-gpu-mode/hackathon",
+            filename="state_dict.pt",
+            cache_dir="./cached_weights"
+        )
+        print(f"📁 Downloaded to: {weights_path}")
     
     # Load original weights
     checkpoint = torch.load(weights_path, map_location='cpu', weights_only=True)
@@ -98,15 +113,22 @@ def create_compatible_optimized_model(config: ModelConfig, weights_path: str) ->
 
 
 if __name__ == "__main__":
-    # Test the weight conversion
+    print("🚀 Downloading and converting weights...")
+    
+    import os
+    
+    # Create cache directory
+    os.makedirs('./cached_weights', exist_ok=True)
+    
+    # Define config
     config = ModelConfig(
         hidden_size=2048,
         proj_size=4096,
-        tower_depth=12,  # Original depth
+        tower_depth=12,
         num_heads=8,
         num_features=79
     )
     
-    # This would be used like:
-    # optimized_model = create_compatible_optimized_model(config, "path/to/weights.pth")
-    print("Weight converter ready. Use create_compatible_optimized_model() to convert a model.")
+    # Download and convert (None = auto-download)
+    optimized_model = create_compatible_optimized_model(config, None)
+    print("✅ Done! Optimized weights ready in ./cached_weights/")
