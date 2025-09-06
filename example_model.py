@@ -18,9 +18,6 @@ import torch
 
 from huggingface_hub import hf_hub_download
 
-# Apply optimizations
-import patching_file
-
 from client import BaseInferenceClient, PendingRequest, InferenceResponse
 from model.inference_model import MultiTowerModel, ModelConfig
 
