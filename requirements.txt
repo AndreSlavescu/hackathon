@@ -17,3 +17,4 @@ sympy==1.14.0
 torch==2.8.0
 typing-extensions==4.15.0
 tzdata==2025.2
+unsloth

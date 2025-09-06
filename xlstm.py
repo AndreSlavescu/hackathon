@@ -3,19 +3,34 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+# Import Unsloth for automatic RMSNorm optimization
+try:
+    import unsloth
+    UNSLOTH_AVAILABLE = True
+    print("Unsloth loaded - RMSNorm will be automatically optimized")
+except ImportError:
+    UNSLOTH_AVAILABLE = False
+    print("Unsloth not available - using standard RMSNorm")
+
 def get_model_device(model):
     return next(iter(model.parameters())).device
 
 class RMSNorm(nn.Module):
     def __init__(self, hidden_size: int, eps: float = 1e-6):
         super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(hidden_size))
+        # Use PyTorch's native RMSNorm (will be automatically optimized by Unsloth if available)
+        self.norm = nn.RMSNorm(hidden_size, eps=eps)
 
     def forward(self, x):
-        variance = x.pow(2).mean(-1, keepdim=True)
-        x = x * torch.rsqrt(variance + self.eps)
-        return self.weight * x
+        return self.norm(x)
+    
+    @property
+    def weight(self):
+        return self.norm.weight
+    
+    @weight.setter
+    def weight(self, value):
+        self.norm.weight = value
 
 class MLSTMCell(nn.Module):
     def __init__(self, hidden_size: int, num_heads: int = 8, gate_soft_cap: float = 30.0):

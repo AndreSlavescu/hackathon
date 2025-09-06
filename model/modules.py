@@ -67,6 +67,12 @@ class BlockLinear(nn.Module):
             self.bias = nn.Parameter(torch.empty(self.hidden_size))
         else:
             self.bias = None
+            
+        # Add proper initialization
+        import math
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
 
     def forward(self, x):
         batch_size = x.shape[0]

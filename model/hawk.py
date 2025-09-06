@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 from .modules import BlockLinear, CausalConv1d, get_model_device
 
@@ -14,6 +15,11 @@ class RGLRU(nn.Module):
         self.input_gate = BlockLinear(num_blocks, hidden_size, bias=False)
         self.recurrence_gate = BlockLinear(num_blocks, hidden_size, bias=False)
         self.a = nn.Parameter(torch.empty(hidden_size))
+        
+        # Fix initialization
+        nn.init.kaiming_uniform_(self.input_gate.weight, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.recurrence_gate.weight, a=math.sqrt(5))
+        nn.init.uniform_(self.a, 0.5, 0.9)
 
     def forward(self, x_t: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
         batch_size, hidden_size = x_t.shape
@@ -48,6 +54,11 @@ class Hawk(nn.Module):
         self.conv = CausalConv1d(hidden_size, conv_kernel_size)
         self.rglru = RGLRU(hidden_size)
         self.out_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        
+        # Fix initialization
+        nn.init.kaiming_uniform_(self.gate_proj.weight, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.recurrent_proj.weight, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.out_proj.weight, a=math.sqrt(5))
 
     def forward(
         self, x: torch.Tensor, state: tuple[torch.Tensor, torch.Tensor]

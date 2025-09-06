@@ -1,1 +1,4 @@
 __pycache__
+cached_weights/
+test_weights.pth
+unsloth_compiled_cache/

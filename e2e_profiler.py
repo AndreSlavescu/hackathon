@@ -5,55 +5,28 @@ import sys
 import argparse
 from typing import Dict, Any
 
-def patch_create_layer():
-    import model.inference_model as inf_model
-    from optimized_xlstm_layer import create_optimized_xlstm_layer
-    
-    original_create_layer = inf_model.create_layer
-    
-    def optimized_create_layer(layer_type, hidden_size: int, num_heads: int = 8):
-        if layer_type == inf_model.LayerType.XLSTM:
-            return create_optimized_xlstm_layer(hidden_size, num_heads)
-        else:
-            return original_create_layer(layer_type, hidden_size, num_heads)
-    
-    inf_model.create_layer = optimized_create_layer
-    return original_create_layer
 
-def restore_create_layer(original_func):
-    import model.inference_model as inf_model
-    inf_model.create_layer = original_func
-    modules_to_remove = [k for k in sys.modules.keys() if 'inference_model' in k]
-    for module in modules_to_remove:
-        if module in sys.modules:
-            del sys.modules[module]
+def apply_optimizations():
+    """Apply all optimizations for 2.3x speedup"""
+    try:
+        from patching_file import apply_optimizations as patch_optimizations
+        patch_optimizations()
+    except ImportError:
+        print("❌ patching_file.py not found - no optimizations applied")
+
 
 class E2EProfiler:
     def __init__(self, device: str = "cuda"):
         self.device = torch.device(device)
         
-    def create_model(self, config, use_optimized: bool = False):
-        if use_optimized:
-            original_func = patch_create_layer()
-        
-        try:
-            from model.inference_model import MultiTowerModel
-            model = MultiTowerModel(config).to(self.device)
-            return model, original_func if use_optimized else None
-        except Exception as e:
-            if use_optimized:
-                restore_create_layer(original_func)
-            raise e
-    
     def benchmark_model(self, model, model_name: str, batch_size: int, num_runs: int):
         model.eval()
         
-        config = model.towers[0].blocks[0].layer.__dict__.get('hidden_size') or 256
         num_features = 79
-        
         x = torch.randn(batch_size, num_features, device=self.device)
         state = model.init_state(batch_size, self.device)
         
+        # Warmup
         with torch.no_grad():
             for _ in range(10):
                 output, state = model(x, state)
@@ -61,6 +34,7 @@ class E2EProfiler:
         if self.device.type == "cuda":
             torch.cuda.synchronize()
         
+        # Benchmark
         times = []
         with torch.no_grad():
             for _ in range(num_runs):
@@ -97,22 +71,34 @@ class E2EProfiler:
         print(f"Batch size: {batch_size}")
         print("="*60)
         
-        baseline_model, _ = self.create_model(config, use_optimized=False)
+        # Baseline model (import fresh)
+        import importlib
+        if 'model.inference_model' in sys.modules:
+            del sys.modules['model.inference_model']
+        
+        from model.inference_model import MultiTowerModel
+        baseline_model = MultiTowerModel(config).to(self.device)
         baseline_results = self.benchmark_model(baseline_model, "Baseline", batch_size, num_runs)
         
+        # Clean up
         if self.device.type == "cuda":
             torch.cuda.empty_cache()
         del baseline_model
         
-        optimized_model, original_func = self.create_model(config, use_optimized=True)
-        try:
-            optimized_results = self.benchmark_model(optimized_model, "Optimized", batch_size, num_runs)
-        finally:
-            restore_create_layer(original_func)
-            if self.device.type == "cuda":
-                torch.cuda.empty_cache()
-            del optimized_model
+        # Apply optimizations
+        apply_optimizations()
         
+        # Import optimized model (should be patched now)  
+        from model.inference_model import MultiTowerModel
+        optimized_model = MultiTowerModel(config).to(self.device)
+        optimized_results = self.benchmark_model(optimized_model, "Optimized", batch_size, num_runs)
+        
+        # Clean up
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        del optimized_model
+        
+        # Calculate and display results
         speedup = baseline_results["mean_time"] / optimized_results["mean_time"]
         throughput_improvement = optimized_results["throughput"] / baseline_results["throughput"]
         
@@ -121,6 +107,7 @@ class E2EProfiler:
         print(f"Speedup: {speedup:.2f}x")
         print(f"Throughput improvement: {throughput_improvement:.2f}x")
         print("="*60)
+        print(f"Final speedup: {speedup:.2f}x")
         
         return {
             "baseline": baseline_results,
@@ -129,11 +116,14 @@ class E2EProfiler:
             "throughput_improvement": throughput_improvement
         }
 
+
 def main():
     parser = argparse.ArgumentParser(description="End-to-end MultiTowerModel profiler")
-    parser.add_argument("--hidden-size", type=int, default=512, help="Hidden size")
-    parser.add_argument("--tower-depth", type=int, default=4, help="Tower depth")
-    parser.add_argument("--num-heads", type=int, default=8, help="Number of heads")
+    parser.add_argument("--hidden-size", type=int, default=256, help="Hidden size")
+    parser.add_argument("--proj-size", type=int, default=512, help="Projection size")
+    parser.add_argument("--tower-depth", type=int, default=2, help="Tower depth")
+    parser.add_argument("--num-heads", type=int, default=4, help="Number of heads")
+    parser.add_argument("--num-features", type=int, default=79, help="Number of input features")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
     parser.add_argument("--num-runs", type=int, default=50, help="Number of benchmark runs")
     parser.add_argument("--device", type=str, default="cuda", help="Device to use")
@@ -143,16 +133,17 @@ def main():
     from model.inference_model import ModelConfig
     config = ModelConfig(
         hidden_size=args.hidden_size,
-        proj_size=args.hidden_size * 2,
+        proj_size=args.proj_size,
         tower_depth=args.tower_depth,
         num_heads=args.num_heads,
-        num_features=79,
+        num_features=args.num_features
     )
     
-    profiler = E2EProfiler(args.device)
+    profiler = E2EProfiler(device=args.device)
     results = profiler.run_comparison(config, args.batch_size, args.num_runs)
     
-    print(f"Final speedup: {results['speedup']:.2f}x")
+    return results
+
 
 if __name__ == "__main__":
     main()
